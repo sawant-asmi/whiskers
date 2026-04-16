@@ -1,9 +1,13 @@
 # Whiskers Desktop Pet - Configuration
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()  # reads .env file into os.environ
 
 # API Keys
-CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "your-api-key-here")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # Window settings
 CAT_SIZE = 150          # Size of the cat image in pixels

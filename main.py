@@ -22,10 +22,19 @@ def main():
     def on_transcript(text):
         print(f"[main] transcript: {text!r}")
         cat.transcript_signal.emit(text)
+
         action = brain.process(text)
-        if action is not None:
-            actions.execute(action, cat)
-            speaker.speak(action.response)
+        if action is None:
+            return
+
+        # Show Groq's reply in the bubble (replaces the transcript text)
+        cat.response_signal.emit(action.response)
+
+        # Execute command actions; chat/unknown just pass through
+        actions.execute(action, cat)
+
+        # Speak the response aloud
+        speaker.speak(action.response)
 
     listener = WakeWordListener(
         on_wake=lambda: cat.wake_signal.emit(),

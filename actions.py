@@ -194,6 +194,11 @@ def _move(action: Action, cat) -> None:
     cat.move_signal.emit(direction)
 
 
+def _chat(action: Action, cat) -> None:
+    """Chat responses are spoken + displayed — nothing to execute."""
+    print(f"[actions] chat: {action.response!r}")
+
+
 def _unknown(action: Action, cat) -> None:
     print("[actions] unknown action — nothing to execute")
 
@@ -222,6 +227,7 @@ def _parse_duration(s: str) -> Optional[int]:
 
 
 _DISPATCH = {
+    "chat": _chat,
     "open_app": _open_app,
     "type_text": _type_text,
     "search_google": _search_google,

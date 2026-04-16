@@ -20,6 +20,7 @@ class CatWindow(QWidget):
     move_signal = pyqtSignal(str)           # "left" or "right"
     thinking_signal = pyqtSignal()          # recording stopped, whisper running
     transcript_signal = pyqtSignal(str)     # transcription ready (may be empty)
+    response_signal = pyqtSignal(str)       # brain reply to show in bubble
 
     def __init__(self):
         self.app = QApplication(sys.argv)
@@ -110,6 +111,7 @@ class CatWindow(QWidget):
         self.move_signal.connect(self._on_move)
         self.thinking_signal.connect(self._on_thinking)
         self.transcript_signal.connect(self._on_transcript)
+        self.response_signal.connect(self._on_response)
 
         self.show()
 
@@ -220,13 +222,21 @@ class CatWindow(QWidget):
         self.show_bubble("Thinking...", duration=15000)
 
     def _on_transcript(self, text):
-        """Transcription ready — display it (truncated) then fall back to idle."""
+        """Transcription ready — display it briefly (brain reply will replace it)."""
         self._last_interaction = time.time()
         if text:
             display = text if len(text) <= 60 else text[:57] + "..."
-            self.show_bubble(display, duration=4000)
+            self.show_bubble(display, duration=10000)  # held until response replaces
         else:
             self.show_bubble("?", duration=2000)
+            self.set_state("idle")
+
+    def _on_response(self, text):
+        """Brain reply arrived — display it and return to idle."""
+        self._last_interaction = time.time()
+        if text:
+            display = text if len(text) <= 80 else text[:77] + "..."
+            self.show_bubble(display, duration=5000)
         self.set_state("idle")
 
     # ── Movement ──
