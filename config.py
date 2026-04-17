@@ -25,20 +25,21 @@ WAKE_WORD_THRESHOLD = 0.5            # detection confidence threshold (0-1)
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHUNK_SIZE = 1280              # ~80ms at 16kHz
 
-# Recording + transcription (Step 3)
-WHISPER_MODEL = "base"               # whisper model size: tiny, base, small, medium, large
-WHISPER_LANGUAGE = "en"              # force English; set None to auto-detect
-SILENCE_RMS_THRESHOLD = 500          # int16 RMS below this counts as silence
-SILENCE_DURATION_MS = 1000           # consecutive silence required to stop recording
-MAX_RECORDING_SECONDS = 12           # hard cap on recording length
-MIN_RECORDING_SECONDS = 0.5          # minimum before silence can trigger stop
+# Silero VAD settings
+VAD_THRESHOLD = 0.5                  # speech probability threshold
+VAD_SILENCE_LIMIT_CHUNKS = 10        # ~320ms of no-speech to stop (10 * 32ms)
+VAD_PRE_SPEECH_TIMEOUT = 6.0         # seconds to wait for speech to start after wake
+VAD_MAX_DURATION_SEC = 15            # hard cap on recording length
+VAD_MIN_SPEECH_CHUNKS = 3            # minimum speech chunks before we accept it
+VAD_CHUNK_SIZE = 512                 # 32ms per frame at 16kHz
 
-# Text-to-speech (Step 6)
-TTS_ENABLED = True                   # master switch
-TTS_RATE = 185                       # words per minute (default ~200; lower = slower)
-TTS_VOLUME = 1.0                     # 0.0 - 1.0
-TTS_VOICE = None                     # case-insensitive name substring match (e.g. "Samantha",
-                                     # "Karen", "Alex", "Daniel"); None = system default
+# Moonshine STT
+MOONSHINE_MODEL = "moonshine-base"
+
+# Kokoro TTS
+KOKORO_VOICE = "af_heart"            # warm, natural voice
+KOKORO_SPEED = 1.0                   # 1.0 = normal speed
+KOKORO_SAMPLE_RATE = 24000           # Kokoro outputs at 24kHz
 
 # Personality settings
 IDLE_SLEEP_TIMEOUT = 300000   # 5 minutes in ms before Whiskers falls asleep

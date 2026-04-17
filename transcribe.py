@@ -1,85 +1,64 @@
-# Whiskers Desktop Pet - Local Whisper transcription
+# Whiskers Desktop Pet - Groq Whisper API transcription
+#
+# Sends captured PCM audio to Groq's Whisper endpoint (whisper-large-v3-turbo).
+# Groq runs Whisper on LPU hardware — transcription returns in under a second.
+# No local Whisper model, no torch inference, no 140MB download.
 
+from __future__ import annotations
+
+import io
 import wave
 import numpy as np
-import whisper
-from config import WHISPER_MODEL, WHISPER_LANGUAGE, AUDIO_SAMPLE_RATE
+from groq import Groq
+
+from config import GROQ_API_KEY, AUDIO_SAMPLE_RATE
+
+WHISPER_MODEL = "whisper-large-v3-turbo"
 
 
-# Bias Whisper toward short voice commands (cuts long-form hallucinations).
-_COMMAND_PROMPT = (
-    "Voice command to a desktop assistant. Examples: open Brave, "
-    "search Google for pasta recipe, take a screenshot, set a timer "
-    "for five minutes, turn the volume up."
-)
-
-# If Whisper's no_speech_prob for every segment is above this, we treat the
-# utterance as silence/noise and return "".
-_NO_SPEECH_PROB_THRESHOLD = 0.6
-
-# Debug: where to dump the last captured PCM so you can listen back and tell
-# whether the problem is the mic or Whisper.
-_DEBUG_WAV_PATH = "/tmp/whiskers_last.wav"
-
-
-class WhisperTranscriber:
+class GroqWhisperTranscriber:
     """
-    Thin wrapper around openai-whisper. Model loads once at startup (slow),
-    transcribe() is called per utterance.
-
-    We feed a numpy int16 array directly so Whisper never invokes ffmpeg —
-    no system ffmpeg binary required.
+    Sends int16 PCM to Groq Whisper API and returns the transcribed text.
+    Reuses a single Groq client.
     """
 
-    def __init__(self, model_name=WHISPER_MODEL, language=WHISPER_LANGUAGE):
-        print(f"Loading Whisper model '{model_name}' (first run downloads ~140MB)...")
-        self.model = whisper.load_model(model_name)
-        self.language = language
-        print("Whisper model loaded.")
+    def __init__(self):
+        if not GROQ_API_KEY:
+            print("[transcribe] GROQ_API_KEY not set — transcription disabled.")
+            self._client = None
+        else:
+            self._client = Groq(api_key=GROQ_API_KEY)
+            print(f"[transcribe] Groq Whisper ready (model: {WHISPER_MODEL})")
 
     def transcribe(self, pcm_int16: np.ndarray) -> str:
+        """
+        Convert int16 PCM to WAV in memory, send to Groq Whisper, return text.
+        """
+        if self._client is None:
+            return ""
         if pcm_int16 is None or len(pcm_int16) == 0:
             return ""
 
-        # Dump recording for debugging (play back with `afplay /tmp/whiskers_last.wav`).
+        # Build WAV in memory (Groq needs a file-like object with a name)
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(AUDIO_SAMPLE_RATE)
+            wf.writeframes(pcm_int16.tobytes())
+        wav_buffer.seek(0)
+        wav_buffer.name = "audio.wav"  # Groq API needs a filename
+
         try:
-            with wave.open(_DEBUG_WAV_PATH, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(AUDIO_SAMPLE_RATE)
-                wf.writeframes(pcm_int16.tobytes())
+            result = self._client.audio.transcriptions.create(
+                model=WHISPER_MODEL,
+                file=wav_buffer,
+                language="en",
+                response_format="text",
+            )
+            text = result.strip() if isinstance(result, str) else str(result).strip()
+            print(f"[transcribe] groq whisper: {text!r}")
+            return text
         except Exception as e:
-            print(f"[transcribe] could not write debug wav: {e}")
-
-        # int16 PCM -> float32 in [-1.0, 1.0] (what whisper expects internally)
-        audio = pcm_int16.astype(np.float32) / 32768.0
-
-        result = self.model.transcribe(
-            audio,
-            fp16=False,                      # CPU path, no GPU half-precision
-            language=self.language,          # skip language detection if set
-            initial_prompt=_COMMAND_PROMPT,  # bias toward short commands
-            condition_on_previous_text=False,  # don't feed past hallucinations back in
-            no_speech_threshold=0.6,
-            logprob_threshold=-1.0,
-            compression_ratio_threshold=2.4,
-            temperature=0.0,                 # deterministic; reduces creative drift
-        )
-
-        # Post-filter: if every segment thinks it's silence, throw the text out.
-        segments = result.get("segments") or []
-        if segments and all(
-            seg.get("no_speech_prob", 0.0) > _NO_SPEECH_PROB_THRESHOLD
-            for seg in segments
-        ):
-            print("[transcribe] rejected — all segments flagged no_speech")
+            print(f"[transcribe] Groq Whisper error: {e!r}")
             return ""
-
-        text = result.get("text", "").strip()
-
-        # Print diagnostics so you can see why something got rejected/accepted.
-        if segments:
-            nsp = [f"{seg.get('no_speech_prob', 0.0):.2f}" for seg in segments]
-            print(f"[transcribe] no_speech_probs={nsp} text={text!r}")
-
-        return text

@@ -3,7 +3,6 @@
 
 from window import CatWindow
 from voice import WakeWordListener
-from transcribe import WhisperTranscriber
 from speech import Speaker
 import brain
 import actions
@@ -12,9 +11,6 @@ import actions
 def main():
     print("Starting Whiskers...")
     cat = CatWindow()
-
-    # Load Whisper up-front so the first wake-word response isn't slow.
-    transcriber = WhisperTranscriber()
 
     # TTS runs on its own thread; speak() is non-blocking.
     speaker = Speaker()
@@ -27,20 +23,19 @@ def main():
         if action is None:
             return
 
-        # Show Groq's reply in the bubble (replaces the transcript text)
+        # Show Groq's reply in the bubble
         cat.response_signal.emit(action.response)
 
         # Execute command actions; chat/unknown just pass through
         actions.execute(action, cat)
 
-        # Speak the response aloud
+        # Speak the response aloud via Kokoro
         speaker.speak(action.response)
 
     listener = WakeWordListener(
         on_wake=lambda: cat.wake_signal.emit(),
         on_recording_complete=lambda: cat.thinking_signal.emit(),
         on_transcript=on_transcript,
-        transcriber=transcriber,
     )
     listener.start()
 

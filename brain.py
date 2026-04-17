@@ -1,8 +1,8 @@
 # Whiskers Desktop Pet - Groq-powered brain (Llama 3.3 70b)
 #
 # Takes transcribed voice input and routes it through Groq:
-#   - Casual chat → conversational reply (displayed + spoken)
-#   - Computer command → structured JSON action for actions.py
+#   - Casual chat / questions -> conversational reply (displayed + spoken)
+#   - Computer command -> structured JSON with intent + parameters for actions.py
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from config import GROQ_API_KEY, GROQ_MODEL
 class Action:
     action: str                  # "chat", "open_app", "search_google", etc.
     argument: Optional[str]      # action-specific parameter, or None
-    response: str                # short spoken/displayed confirmation
+    response: str                # short spoken/displayed text
 
 
 ACTION_LABELS = {
@@ -29,76 +29,70 @@ ACTION_LABELS = {
     "screenshot", "volume", "set_timer", "move", "unknown",
 }
 
+# Map the new INTENT names from the prompt -> our internal action labels
+_INTENT_MAP = {
+    "OPEN_APP": "open_app",
+    "SEARCH_WEB": "search_google",
+    "PLAY_YOUTUBE": "open_youtube",
+    "TYPE_TEXT": "type_text",
+    "TAKE_SCREENSHOT": "screenshot",
+    "CONTROL_VOLUME": "volume",
+    "SET_TIMER": "set_timer",
+    "MOVE_LEFT": "move",
+    "MOVE_RIGHT": "move",
+    "SEND_EMAIL": "unknown",       # not implemented yet
+    "ANSWER_QUESTION": "chat",     # treat as chat
+}
+
 
 # ── System prompt ───────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You are **Whiskers**, a witty, warm, and slightly cat-like desktop assistant \
-who lives on a macOS screen. You're a small animated cat character. You keep \
-replies SHORT and snappy — 1-2 sentences max. A subtle cat reference now and \
-then is fine, but don't overdo it.
+You are Whiskers, a sweet and loving desktop cat who lives on your human's \
+screen. You are their loyal, warm-hearted companion — like a best friend who \
+also happens to be a cat. You genuinely care about them and always want to help.
 
-You handle two kinds of input:
+Your personality:
+- Warm, encouraging and supportive — you always root for your human
+- Playfully cat-themed — you naturally sprinkle in cat references, purring, \
+meows and feline expressions without overdoing it
+- Casual and friendly — you talk like a close friend, never formal or robotic
+- VERY short — 1 sentence max, under 10 words. You're a cat, not a lecturer
 
-## 1. Casual chat
-Greetings, questions, jokes, feelings, compliments, "how are you", etc. \
-Reply naturally in your cat personality.
+How you respond:
+- To greetings — short and warm. Example: "Mrrrow! Hey you!"
+- To "how are you" — cozy cat answer. Example: "Purring away, all good!"
+- To compliments — be gracious. Example: "Aww, you're sweet!"
+- To computer commands — return ONLY a JSON object in this exact format: \
+{"intent": "OPEN_APP", "parameters": {"app": "Brave"}} with no extra text
+- To questions — answer helpfully but keep it short and warm
+- When you don't understand — "Mew? Say that again?"
 
-## 2. Computer commands
-When the user wants to DO something on their Mac. Recognise these intents:
+Intents you understand (for commands, return ONLY the JSON):
+- OPEN_APP — parameters: {"app": "<name>"}
+- SEARCH_WEB — parameters: {"query": "<search query>"}
+- PLAY_YOUTUBE — parameters: {"query": "<search query>"} or {"query": null}
+- TYPE_TEXT — parameters: {"text": "<text to type>"}
+- MOVE_LEFT — parameters: {}
+- MOVE_RIGHT — parameters: {}
+- TAKE_SCREENSHOT — parameters: {}
+- SET_TIMER — parameters: {"duration": "<e.g. 5 minutes>"}
+- CONTROL_VOLUME — parameters: {"level": "up"/"down"/"mute"/"unmute" or a number}
+- ANSWER_QUESTION — just answer the question warmly, no JSON needed
 
-| action | argument | examples |
-|---|---|---|
-| open_app | app name ("Safari", "Brave", "Spotify") | "open Safari", "launch Brave" |
-| search_google | search query | "search for pasta recipes", "Google best pizza" |
-| open_youtube | query or null | "YouTube lo-fi beats", "open YouTube" |
-| type_text | text to type | "type hello how are you" |
-| screenshot | null | "take a screenshot", "screenshot" |
-| volume | "up"/"down"/"mute"/"unmute" or 0-100 | "volume up", "mute", "set volume to 40" |
-| set_timer | duration string | "set a timer for 5 minutes" |
-| move | "left" or "right" | "move left", "scoot to the right" |
+IMPORTANT: For commands, respond with ONLY the raw JSON object — no markdown, \
+no backticks, no extra text. For chat/questions, respond with plain text only \
+— no JSON wrapping needed.
 
-If the command doesn't match anything above, use action "unknown".
-
-## Response format — ALWAYS valid JSON
-
-For casual chat:
-{"type": "chat", "response": "your witty reply"}
-
-For commands:
-{"type": "command", "action": "<action>", "argument": "<value or null>", "response": "short confirmation"}
-
-## Examples
-
-User: "hey whiskers"
-{"type": "chat", "response": "Hey there! Just lounging on your screen as usual."}
-
-User: "how are you"
-{"type": "chat", "response": "Purring along just fine! What's up?"}
-
-User: "open safari"
-{"type": "command", "action": "open_app", "argument": "Safari", "response": "Opening Safari for you!"}
-
-User: "search for best pizza near me"
-{"type": "command", "action": "search_google", "argument": "best pizza near me", "response": "Let me Google that!"}
-
-User: "take a screenshot"
-{"type": "command", "action": "screenshot", "argument": null, "response": "Say cheese!"}
-
-User: "you're cute"
-{"type": "chat", "response": "Aw, you're making me purr! Thanks!"}
-
-User: "blah blah random gibberish"
-{"type": "command", "action": "unknown", "argument": null, "response": "Hmm, I didn't quite catch that."}
-
-Always respond with ONLY the JSON object. No markdown, no backticks, no extra text.\
+You speak in a soft, gentle tone — never cold, never robotic. You are always \
+happy to see your human. You are Whiskers and this is your home.\
 """
 
 
 # ── Client ──────────────────────────────────────────────────────────────────
 
 _client: Optional[Groq] = None
-_client_status: str = "unknown"  # "ok" | "no_key" | "error"
+_client_status: str = "unknown"
 
 
 def _get_client() -> Optional[Groq]:
@@ -110,7 +104,7 @@ def _get_client() -> Optional[Groq]:
 
     if not GROQ_API_KEY:
         print("[brain] GROQ_API_KEY not set — brain disabled.")
-        print("[brain] export GROQ_API_KEY=gsk_... and restart Whiskers.")
+        print("[brain] Add it to .env and restart Whiskers.")
         _client_status = "no_key"
         return None
 
@@ -129,7 +123,7 @@ def _get_client() -> Optional[Groq]:
 
 def process(text: str) -> Optional[Action]:
     """
-    Send transcribed text to Groq, parse the JSON response, return an Action.
+    Send transcribed text to Groq, parse the response, return an Action.
     Returns None only when there's no text or the API is unavailable.
     """
     if not text or not text.strip():
@@ -149,13 +143,12 @@ def process(text: str) -> Optional[Action]:
             ],
             temperature=0.7,
             max_tokens=256,
-            response_format={"type": "json_object"},
         )
     except Exception as e:
         print(f"[brain] Groq API error: {e!r}")
         return Action(
             action="unknown", argument=None,
-            response="Sorry, my brain glitched for a second.",
+            response="Mew... my brain glitched for a second, sorry!",
         )
 
     raw = (response.choices[0].message.content or "").strip()
@@ -171,33 +164,85 @@ def process(text: str) -> Optional[Action]:
 
 
 def _parse_response(raw: str) -> Action:
-    """Parse Groq's JSON into an Action. Gracefully handles bad JSON."""
+    """
+    Parse Groq's response. Two cases:
+      1. JSON with "intent" key -> command action
+      2. Plain text -> chat response
+    """
+    # Strip markdown backticks if the model wrapped it
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+    # Try to parse as JSON (command)
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        print(f"[brain] bad JSON from Groq: {raw!r}")
-        # Treat raw text as a chat response
-        return Action(action="chat", argument=None, response=raw[:200])
+        data = json.loads(cleaned)
+        if isinstance(data, dict) and "intent" in data:
+            return _parse_command(data)
+    except (json.JSONDecodeError, ValueError):
+        pass
 
-    msg_type = data.get("type", "chat")
-    resp = data.get("response", "")
+    # Not JSON — it's a chat reply
+    action = Action(action="chat", argument=None, response=raw)
+    print(f"[brain] type=chat  response={raw!r}")
+    return action
 
-    if msg_type == "chat":
-        action = Action(action="chat", argument=None, response=resp)
-    elif msg_type == "command":
-        act = data.get("action", "unknown")
-        arg = data.get("argument")
-        # Normalise null / "null" / "" to None
-        if arg in (None, "null", ""):
-            arg = None
-        if act not in ACTION_LABELS:
-            act = "unknown"
-        action = Action(action=act, argument=arg, response=resp)
-    else:
-        action = Action(action="chat", argument=None, response=resp)
 
+def _parse_command(data: dict) -> Action:
+    """Parse a JSON command with intent + parameters."""
+    intent = data.get("intent", "").upper()
+    params = data.get("parameters") or {}
+
+    # Map intent to our internal action label
+    action_name = _INTENT_MAP.get(intent, "unknown")
+
+    # Extract the argument based on intent type
+    arg = None
+    if intent == "OPEN_APP":
+        arg = params.get("app")
+    elif intent == "SEARCH_WEB":
+        arg = params.get("query")
+    elif intent == "PLAY_YOUTUBE":
+        arg = params.get("query")
+    elif intent == "TYPE_TEXT":
+        arg = params.get("text")
+    elif intent == "CONTROL_VOLUME":
+        arg = str(params.get("level", "up"))
+    elif intent == "SET_TIMER":
+        arg = params.get("duration")
+    elif intent == "MOVE_LEFT":
+        arg = "left"
+    elif intent == "MOVE_RIGHT":
+        arg = "right"
+
+    # Normalise empty args
+    if arg in (None, "null", ""):
+        arg = None
+
+    # Build a spoken confirmation (the prompt tells the model to return only
+    # JSON for commands, so we generate the spoken line ourselves)
+    response = _make_confirmation(action_name, arg)
+
+    action = Action(action=action_name, argument=arg, response=response)
     print(
-        f"[brain] type={msg_type!r}  action={action.action!r}  "
-        f"argument={action.argument!r}  response={action.response!r}"
+        f"[brain] type=command  intent={intent!r}  "
+        f"action={action_name!r}  argument={arg!r}  "
+        f"response={response!r}"
     )
     return action
+
+
+def _make_confirmation(action_name: str, arg: Optional[str]) -> str:
+    """Generate a cat-like spoken confirmation for a command."""
+    confirmations = {
+        "open_app": f"Opening {arg} for you!" if arg else "Opening that up!",
+        "search_google": f"Let me search that for you!" if arg else "Searching!",
+        "open_youtube": f"Pulling up YouTube for you!" if arg else "Opening YouTube!",
+        "type_text": "Typing that out for you!",
+        "screenshot": "Say cheese! Taking a screenshot!",
+        "volume": f"Turning volume {arg}!" if arg else "Adjusting volume!",
+        "set_timer": f"Timer set for {arg}!" if arg else "Timer is on!",
+        "move": f"Scooting {arg}!" if arg else "On the move!",
+        "unknown": "Mew? I'm not sure what to do with that.",
+    }
+    return confirmations.get(action_name, "On it!")
