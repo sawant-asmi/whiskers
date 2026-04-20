@@ -22,10 +22,12 @@ class Speaker:
 
     _SHUTDOWN = object()
 
-    def __init__(self):
+    def __init__(self, speaking_lock: threading.Event = None):
         self._queue: queue.Queue = queue.Queue()
         self._pipe = None
         self._thread: Optional[threading.Thread] = None
+        # Shared flag — set while audio is playing so the mic loop can pause.
+        self._speaking_lock = speaking_lock
 
         self._thread = threading.Thread(
             target=self._run, name="WhiskersTTS", daemon=True
@@ -60,6 +62,8 @@ class Speaker:
 
     def _speak_streaming(self, text: str) -> None:
         """Generate and stream audio chunk by chunk."""
+        if self._speaking_lock:
+            self._speaking_lock.set()  # tell mic loop to pause
         try:
             for result in self._pipe(
                 text,
@@ -67,9 +71,10 @@ class Speaker:
                 speed=KOKORO_SPEED,
             ):
                 audio = result.audio.numpy() if hasattr(result.audio, 'numpy') else np.array(result.audio)
-                # Play this chunk immediately — blocks until chunk finishes,
-                # but the next chunk is already generating in the pipeline.
                 sd.play(audio, samplerate=KOKORO_SAMPLE_RATE)
                 sd.wait()
         except Exception as e:
             print(f"[speech] Kokoro error: {e!r}")
+        finally:
+            if self._speaking_lock:
+                self._speaking_lock.clear()  # mic loop resumes

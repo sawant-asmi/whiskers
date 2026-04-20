@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Whiskers Desktop Pet - Main Entry Point
 
+import threading
+
 from window import CatWindow
 from voice import WakeWordListener
 from speech import Speaker
@@ -12,8 +14,11 @@ def main():
     print("Starting Whiskers...")
     cat = CatWindow()
 
+    # Shared flag: set while Kokoro is playing audio, so the mic loop pauses.
+    speaking_lock = threading.Event()
+
     # TTS runs on its own thread; speak() is non-blocking.
-    speaker = Speaker()
+    speaker = Speaker(speaking_lock=speaking_lock)
 
     def on_transcript(text):
         print(f"[main] transcript: {text!r}")
@@ -36,6 +41,7 @@ def main():
         on_wake=lambda: cat.wake_signal.emit(),
         on_recording_complete=lambda: cat.thinking_signal.emit(),
         on_transcript=on_transcript,
+        speaking_lock=speaking_lock,
     )
     listener.start()
 

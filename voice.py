@@ -39,10 +39,11 @@ class WakeWordListener:
     """
 
     def __init__(self, on_wake=None, on_recording_complete=None,
-                 on_transcript=None):
+                 on_transcript=None, speaking_lock=None):
         self.on_wake = on_wake
         self.on_recording_complete = on_recording_complete
         self.on_transcript = on_transcript
+        self._speaking_lock = speaking_lock  # set while TTS is playing
 
         self.running = False
         self._thread = None
@@ -92,6 +93,10 @@ class WakeWordListener:
         try:
             while self.running:
                 # ── WAKE-WORD PHASE ──
+                # Skip processing while Kokoro is speaking (prevents feedback loop)
+                if self._speaking_lock and self._speaking_lock.is_set():
+                    stream.read(AUDIO_CHUNK_SIZE, exception_on_overflow=False)
+                    continue
                 audio_data = stream.read(AUDIO_CHUNK_SIZE, exception_on_overflow=False)
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 self.ww_model.predict(audio_array)
